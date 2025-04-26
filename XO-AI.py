@@ -2,7 +2,7 @@ import random
 import pickle
 from collections import defaultdict
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, ttk
 
 class QLearningAgent:
     def __init__(self):
@@ -13,221 +13,283 @@ class QLearningAgent:
         self.epsilon_decay = 0.995
         self.min_epsilon = 0.01
         self.training_phase = 0
-        self.training_strength = 1  # شدة التدريب الجديدة
-
+        
     def get_state_key(self, board):
         return tuple(board)
-
+    
     def choose_action(self, board, available_actions, player='O'):
         current_epsilon = max(self.min_epsilon, self.epsilon * (self.epsilon_decay ** self.training_phase))
-
         if random.random() < current_epsilon:
             return random.choice(available_actions)
-
-        action_values = {}
-        for action in available_actions:
-            new_board = board.copy()
-            new_board[action] = player
-            state_key = self.get_state_key(new_board)
-            action_values[action] = self.q_values.get(state_key, 0)
-
+        
+        action_values = {
+            a: self.q_values[self.get_state_key(self.simulate_move(board, a, player))]
+            for a in available_actions
+        }
         max_value = max(action_values.values())
-        best_actions = [k for k, v in action_values.items() if v == max_value]
+        best_actions = [a for a, v in action_values.items() if v == max_value]
         return random.choice(best_actions) if best_actions else random.choice(available_actions)
-
+    
+    def simulate_move(self, board, action, player):
+        new_board = board.copy()
+        new_board[action] = player
+        return new_board
+    
     def update_q_value(self, old_board, action, reward, new_board):
-        old_state_key = self.get_state_key(old_board)
-        new_state_key = self.get_state_key(new_board)
-
-        max_future_value = max(
-            [self.q_values.get(self.get_state_key(self.make_move(new_board.copy(), a, 'O')), 0)
-             for a in self.get_available_moves(new_board)] or [0]
-        )
-
-        current_q = self.q_values.get(old_state_key, 0)
-        learning_rate = self.alpha * (1.0 - 0.9 * (self.training_phase / 1000))
-        new_q = current_q + learning_rate * (reward + self.gamma * max_future_value - current_q)
-        self.q_values[old_state_key] = new_q
-
-    def make_move(self, board, position, player):
-        board[position] = player
-        return board
-
+        old_state = self.get_state_key(old_board)
+        future_rewards = [
+            self.q_values[self.get_state_key(self.simulate_move(new_board, a, 'O'))]
+            for a in self.get_available_moves(new_board)
+        ]
+        max_future = max(future_rewards) if future_rewards else 0
+        
+        self.q_values[old_state] += self.alpha * (reward + self.gamma * max_future - self.q_values[old_state])
+    
     def get_available_moves(self, board):
         return [i for i, x in enumerate(board) if x == ' ']
-
+    
     def save_q_values(self, filename='xo_qvalues.pkl'):
         with open(filename, 'wb') as f:
             pickle.dump(dict(self.q_values), f)
-
+    
     def load_q_values(self, filename='xo_qvalues.pkl'):
         try:
             with open(filename, 'rb') as f:
                 self.q_values = defaultdict(float, pickle.load(f))
-            print("تم تحميل خبرات الروبوت السابقة بنجاح!")
-        except (FileNotFoundError, EOFError):
-            print("بدون خبرة سابقة، سيبدأ الروبوت من الصفر")
+            print("تم تحميل الخبرات السابقة بنجاح!")
+        except FileNotFoundError:
+            print("بدون خبرات سابقة، سيبدأ من الصفر")
 
 class XOGameGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("XO - روبوت متطور")
-        self.root.configure(bg="#e3f2fd")
-        self.board = [' ' for _ in range(9)]
+        self.root.title("XO - روبوت ذكي")
+        self.board = [' '] * 9
         self.current_player = 'X'
         self.agent = QLearningAgent()
         self.agent.load_q_values()
-        self.game_count = 0
         self.training_mode = False
         self.training_games = 0
-        self.stop_training_flag = False
-
+        self.after_id = None
+        
         self.setup_ui()
-
+        self.setup_progress()
+    
     def setup_ui(self):
-        self.board_frame = tk.Frame(self.root, bg="#e3f2fd")
-        self.board_frame.pack(pady=20)
-
+        # لوحة اللعبة
+        self.board_frame = tk.Frame(self.root)
+        self.board_frame.pack(pady=10)
+        
         self.buttons = []
         for i in range(9):
-            btn = tk.Button(self.board_frame, text=' ', font=('Arial', 26, 'bold'), width=5, height=2,
-                            bg='white', command=lambda idx=i: self.on_click(idx))
-            btn.grid(row=i//3, column=i%3, padx=5, pady=5)
+            btn = tk.Button(
+                self.board_frame,
+                text=' ', font=('Arial', 24), width=4, height=2,
+                bg='#f0f0f0', command=lambda idx=i: self.on_click(idx)
+            )
+            btn.grid(row=i//3, column=i%3, padx=2, pady=2)
             self.buttons.append(btn)
-
-        control_frame = tk.Frame(self.root, bg="#e3f2fd")
+        
+        # أدوات التحكم
+        control_frame = tk.Frame(self.root)
         control_frame.pack(pady=10)
-
-        tk.Button(control_frame, text="لعبة جديدة", font=('Arial', 12), command=self.reset_game,
-                  bg="#81d4fa").pack(side=tk.LEFT, padx=5)
-        tk.Button(control_frame, text="بدء التدريب", font=('Arial', 12), command=self.start_training_dialog,
-                  bg="#a5d6a7").pack(side=tk.LEFT, padx=5)
-        self.stop_btn = tk.Button(control_frame, text="إيقاف التدريب", font=('Arial', 12), command=self.stop_training,
-                                  bg="#ef9a9a", state=tk.DISABLED)
+        
+        self.new_game_btn = tk.Button(
+            control_frame, text="لعبة جديدة", font=('Arial', 12),
+            command=self.reset_game, bg='#e1f5fe'
+        )
+        self.new_game_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.train_btn = tk.Button(
+            control_frame, text="بدء التدريب", font=('Arial', 12),
+            command=self.start_training_dialog, bg='#e8f5e9'
+        )
+        self.train_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_btn = tk.Button(
+            control_frame, text="إيقاف التدريب", font=('Arial', 12),
+            command=self.confirm_stop, bg='#ffebee', state=tk.DISABLED
+        )
         self.stop_btn.pack(side=tk.LEFT, padx=5)
-
-        self.status_label = tk.Label(self.root, text="دورك أنت (X)", font=('Arial', 16, 'bold'), bg="#e3f2fd", fg="#1565c0")
-        self.status_label.pack(pady=10)
-
+        
+        # معلومات الحالة
+        self.status_label = tk.Label(
+            self.root, text="دورك أنت (X)", 
+            font=('Arial', 14, 'bold'), fg='#0d47a1'
+        )
+        self.status_label.pack(pady=5)
+        
+        self.stats_label = tk.Label(
+            self.root, text="الألعاب: 0 | التدريب: 0",
+            font=('Arial', 10), fg='#616161'
+        )
+        self.stats_label.pack()
+    
+    def setup_progress(self):
+        self.progress_frame = tk.Frame(self.root)
+        self.progress_frame.pack(pady=5)
+        
+        self.progress = ttk.Progressbar(
+            self.progress_frame,
+            orient='horizontal',
+            length=300,
+            mode='determinate'
+        )
+        self.progress.pack()
+        
+        self.progress_label = tk.Label(
+            self.progress_frame,
+            text="تقدم التدريب: 0%",
+            font=('Arial', 10)
+        )
+        self.progress_label.pack()
+    
     def start_training_dialog(self):
-        if self.training_mode:
-            return
-
-        games = simpledialog.askinteger("عدد ألعاب التدريب", "كم عدد الألعاب التي تريد تدريب الروبوت عليها؟ (100-10000)", minvalue=100, maxvalue=10000)
-        strength = simpledialog.askfloat("شدة التدريب", "اختر شدة التدريب (1 = عادي, أعلى = تعلم أسرع)", minvalue=0.5, maxvalue=10.0)
-
+        games = simpledialog.askinteger(
+            "عدد الألعاب",
+            "أدخل عدد ألعاب التدريب (100-5000):",
+            parent=self.root,
+            minvalue=100,
+            maxvalue=5000
+        )
         if games:
-            self.agent.training_strength = strength or 1
             self.start_training(games)
-
+    
     def start_training(self, games):
         self.training_mode = True
         self.training_games = games
-        self.stop_training_flag = False
-        self.stop_btn.config(state=tk.NORMAL)
-        for btn in self.buttons:
-            btn.config(state=tk.DISABLED)
-        self.status_label.config(text="جاري التدريب...")
-        self.root.after(10, self.train_robot)
-
-    def stop_training(self):
-        self.stop_training_flag = True
-        self.training_mode = False
-        self.stop_btn.config(state=tk.DISABLED)
-        self.status_label.config(text="تم إيقاف التدريب.")
-        self.reset_game(silent=True)
-
+        self.original_games = games
+        self.update_controls()
+        self.train_robot()
+    
     def train_robot(self):
-        if self.stop_training_flag or self.training_games <= 0:
+        if self.training_games <= 0 or not self.training_mode:
             self.stop_training()
-            self.agent.save_q_values()
             return
-
+        
         self.reset_game(silent=True)
-        self.training_move()
-
-    def training_move(self):
-        if self.stop_training_flag:
+        self.process_training_move()
+    
+    def process_training_move(self):
+        if not self.training_mode:
             return
-
+        
         available = self.agent.get_available_moves(self.board)
-
         if available:
-            move = self.agent.choose_action(self.board, available, 'O')
-            self.make_move(move, 'O')
-
+            player = 'X' if self.current_player == 'X' else 'O'
+            move = self.get_training_move(player, available)
+            self.make_move(move, player)
+            
+            winner = self.check_winner()
+            if winner:
+                self.handle_training_result(winner)
+            else:
+                self.after_id = self.root.after(10, self.process_training_move)
+        else:
+            self.after_id = self.root.after(10, self.train_robot)
+    
+    def get_training_move(self, player, available_moves):
+        if player == 'X':
+            return random.choice(available_moves)
+        else:
+            return self.agent.choose_action(self.board, available_moves, player)
+    
+    def handle_training_result(self, winner):
+        reward = 1 if winner == 'O' else (-1 if winner == 'X' else 0)
+        self.agent.update_q_value(self.board, None, reward, self.board)
+        self.training_games -= 1
+        self.update_progress()
+        self.after_id = self.root.after(10, self.train_robot)
+    
+    def update_progress(self):
+        progress = ((self.original_games - self.training_games) / self.original_games) * 100
+        self.progress['value'] = progress
+        self.progress_label.config(text=f"تقدم التدريب: {progress:.1f}%")
+        if self.training_games % 50 == 0:
+            self.agent.save_q_values()
+    
+    def confirm_stop(self):
+        if messagebox.askyesno("تأكيد", "هل تريد إيقاف التدريب؟"):
+            self.stop_training()
+    
+    def stop_training(self):
+        if self.after_id:
+            self.root.after_cancel(self.after_id)
+        self.training_mode = False
+        self.agent.save_q_values()
+        self.update_controls()
+        self.reset_game()
+        messagebox.showinfo("معلومات", "تم حفظ التقدم بنجاح!")
+    
+    def update_controls(self):
+        state = tk.NORMAL if not self.training_mode else tk.DISABLED
+        self.train_btn.config(state=state)
+        self.stop_btn.config(state=tk.DISABLED if not self.training_mode else tk.NORMAL)
+        self.new_game_btn.config(state=state)
+    
+    def on_click(self, pos):
+        if not self.training_mode and self.board[pos] == ' ' and self.current_player == 'X':
+            self.make_move(pos, 'X')
             winner = self.check_winner()
             if not winner:
-                move = random.choice(self.agent.get_available_moves(self.board))
-                self.make_move(move, 'X')
-                winner = self.check_winner()
-
-        self.training_games -= 1
-        self.agent.training_phase += int(1 * self.agent.training_strength)
-
-        if self.training_games > 0:
-            self.root.after(1, self.train_robot)
-        else:
-            self.stop_training()
-
-    def on_click(self, idx):
-        if self.training_mode or self.board[idx] != ' ':
-            return
-
-        self.make_move(idx, 'X')
-        winner = self.check_winner()
-        if not winner:
-            self.status_label.config(text="الروبوت يفكر...")
-            self.root.after(700, self.robot_move)
-
-    def robot_move(self):
-        if self.training_mode:
-            return
-
+                self.current_player = 'O'
+                self.status_label.config(text="الروبوت يفكر...")
+                self.after_id = self.root.after(500, self.agent_move)
+    
+    def agent_move(self):
         available = self.agent.get_available_moves(self.board)
         if available:
             move = self.agent.choose_action(self.board, available, 'O')
             self.make_move(move, 'O')
-            self.check_winner()
-
+            winner = self.check_winner()
+            if not winner:
+                self.current_player = 'X'
+                self.status_label.config(text="دورك أنت (X)")
+    
     def make_move(self, pos, player):
         self.board[pos] = player
-        self.buttons[pos].config(text=player, state=tk.DISABLED,
-                                 fg='#1565c0' if player == 'X' else '#c62828')
-
+        self.buttons[pos].config(
+            text=player,
+            state=tk.DISABLED,
+            bg='white',
+            fg='#1565c0' if player == 'X' else '#c62828'
+        )
+    
     def check_winner(self):
-        lines = [(0,1,2), (3,4,5), (6,7,8), (0,3,6), (1,4,7), (2,5,8), (0,4,8), (2,4,6)]
-        for a, b, c in lines:
+        win_patterns = [
+            [0,1,2], [3,4,5], [6,7,8],  # صفوف
+            [0,3,6], [1,4,7], [2,5,8],  # أعمدة
+            [0,4,8], [2,4,6]            # أقطار
+        ]
+        
+        for pattern in win_patterns:
+            a, b, c = pattern
             if self.board[a] == self.board[b] == self.board[c] != ' ':
-                self.highlight_winner([a,b,c])
-                self.show_result(self.board[a])
+                self.highlight_win(pattern)
                 return self.board[a]
+        
         if ' ' not in self.board:
-            self.show_result('T')
             return 'T'
         return None
-
-    def highlight_winner(self, positions):
-        for pos in positions:
-            self.buttons[pos].config(bg="#a5d6a7")
-
-    def show_result(self, winner):
-        for btn in self.buttons:
-            btn.config(state=tk.DISABLED)
-        msg = "تعادل!" if winner == 'T' else f"{'أنت' if winner == 'X' else 'الروبوت'} فاز!"
-        self.status_label.config(text=msg)
-        if not self.training_mode:
-            messagebox.showinfo("نتيجة اللعبة", msg)
-
+    
+    def highlight_win(self, pattern):
+        for pos in pattern:
+            self.buttons[pos].config(bg='#c8e6c9')
+    
     def reset_game(self, silent=False):
         self.board = [' '] * 9
+        self.current_player = 'X'
         for btn in self.buttons:
-            btn.config(text=' ', state=tk.NORMAL, bg='white')
+            btn.config(text=' ', state=tk.NORMAL, bg='#f0f0f0')
         if not silent:
             self.status_label.config(text="دورك أنت (X)")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.geometry("400x600")
-    app = XOGameGUI(root)
-    root.mainloop()
+    try:
+        root = tk.Tk()
+        root.geometry("450x600")
+        XOGameGUI(root)
+        root.mainloop()
+    except tk.TclError as e:
+        print(f"خطأ: {e}")
+        print("تأكد من تثبيت مكتبة Tkinter")
